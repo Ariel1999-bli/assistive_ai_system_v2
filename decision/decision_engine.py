@@ -4,30 +4,31 @@ import config
 
 class DecisionEngine:
     """
-    Decision Engine avec :
-    - modes (navigation / exploration / human_priority)
-    - multi-personnes
-    - ré-annonce intelligente
-    - mise à jour si la direction change
+    V2 intelligente :
+    - modes : navigation / exploration / human_priority
+    - ré-annonce si direction change
+    - ré-annonce si proximité change significativement
+    - gestion multi-personnes plus dynamique
     """
 
     def __init__(self):
         self.last_global_message = None
         self.last_global_time = 0.0
 
-        self.global_cooldown = 0.8
-        self.same_message_cooldown = 2.5
-        self.long_reannounce_cooldown = 4.0
-        self.silence_after_speak = 1.0
+        self.global_cooldown = 0.7
+        self.same_message_cooldown = 2.0
+        self.long_reannounce_cooldown = 3.5
+        self.silence_after_speak = 0.8
 
         self.current_focus_id = None
         self.focus_locked_until = 0.0
-        self.focus_lock_duration = 2.0
+        self.focus_lock_duration = 1.5
 
-        # multi-personne : léger verrou, mais pas trop agressif
         self.multi_person_anchor = None
         self.multi_person_anchor_until = 0.0
-        self.multi_person_anchor_duration = 2.0
+        self.multi_person_anchor_duration = 1.5
+
+        self.proximity_delta_threshold = 0.08
 
     # =========================================================
     # NORMALIZATION
@@ -131,20 +132,64 @@ class DecisionEngine:
 
         return current_direction != previous_direction
 
-    # =========================================================
-    # MESSAGE BUILDERS
-    # =========================================================
-    def _build_multi_person_message(self, people):
-        """
-        Version stable mais toujours utile.
-        """
-        directions = sorted([p.get("direction", "center") for p in people[:2]])
+    def _proximity_changed_significantly(self, obj):
+        current_proximity = obj.get("proximity_score", None)
+        previous_proximity = obj.get("previous_proximity_score", None)
 
+        if current_proximity is None or previous_proximity is None:
+            return False
+
+        return abs(current_proximity - previous_proximity) >= self.proximity_delta_threshold
+
+    def _has_meaningful_change(self, obj):
+        return self._direction_changed(obj) or self._proximity_changed_significantly(obj)
+
+    # =========================================================
+    # MULTI PERSON
+    # =========================================================
+    def _build_multi_person_message(self, people, mode):
+        people = sorted(
+            people[:2],
+            key=lambda p: (
+                self._direction_rank(p.get("direction", "center")),
+                -p.get("proximity_score", 0.0)
+            )
+        )
+
+        directions = sorted([p.get("direction", "center") for p in people])
+
+        if mode == "navigation":
+            if directions == ["left", "right"]:
+                return "Two persons, one on your left and one on your right"
+            return "Two persons ahead"
+
+        if mode == "human_priority":
+            if directions == ["left", "right"]:
+                return "Two persons, one on your left and one on your right"
+            return "Two persons ahead"
+
+        # exploration : un peu plus descriptif
         if directions == ["left", "right"]:
             return "Two persons, one on your left and one on your right"
 
+        if directions == ["center", "center"]:
+            return "Two persons ahead"
+
+        if "center" in directions and "left" in directions:
+            return "Person ahead and another on your left"
+
+        if "center" in directions and "right" in directions:
+            return "Person ahead and another on your right"
+
         return "Two persons ahead"
 
+    def _multi_person_scene_signature(self, people):
+        directions = sorted([p.get("direction", "center") for p in people[:2]])
+        return tuple(directions)
+
+    # =========================================================
+    # MESSAGE BUILDERS
+    # =========================================================
     def _build_initial_message(self, obj):
         label = self._pretty_label(obj.get("label", "object"))
         direction = obj.get("direction", "center")
@@ -156,18 +201,23 @@ class DecisionEngine:
     def _build_update_message(self, obj, mode):
         state = obj.get("state", "STABLE")
         direction = obj.get("direction", "center")
-        label = self._pretty_label(obj.get("label", "object"))
+        raw_label = obj.get("label", "")
+        label = self._pretty_label(raw_label)
 
-        # 1. Si la direction change, on autorise une mise à jour
-        if self._direction_changed(obj):
+        # 1. Changement direction / proximité
+        if self._has_meaningful_change(obj):
+            if raw_label == "person":
+                if self._is_close_object(obj):
+                    if direction == "center":
+                        return "Close ahead"
+                    return f"Close on your {direction}"
+
             if direction == "center":
                 return f"{label} ahead"
             return f"{label} on your {direction}"
 
-        # 2. Gestion du close
+        # 2. Approche
         if state == "APPROACHING":
-            raw_label = obj.get("label", "")
-
             if raw_label == "person":
                 if not self._is_close_object(obj):
                     return None
@@ -179,14 +229,13 @@ class DecisionEngine:
             if mode == "exploration":
                 if not self._is_close_object(obj):
                     return None
-
                 if direction == "center":
                     return "Close ahead"
                 return f"Close on your {direction}"
 
             return None
 
-        # 3. En exploration, on peut tolérer left/right simples pour mouvement
+        # 3. Exploration : mouvements simples
         if mode == "exploration":
             if state == "MOVING_LEFT":
                 return "Left"
@@ -217,14 +266,13 @@ class DecisionEngine:
         return True
 
     def _can_emit_for_object(self, obj, message, now):
-        # si direction change -> on autorise
-        if self._direction_changed(obj):
+        if self._has_meaningful_change(obj):
             return True
 
         if obj.get("last_announcement") != message:
             return True
 
-        return (now - obj.get("last_announcement_time", 0)) > self.long_reannounce_cooldown
+        return (now - obj.get("last_announcement_time", 0.0)) > self.long_reannounce_cooldown
 
     # =========================================================
     # FOCUS
@@ -269,17 +317,16 @@ class DecisionEngine:
         # MULTI-PERSON PRIORITY
         # -----------------------------------------------------
         people = self._get_visible_people(visible)
-
         if len(people) >= 2:
-            message = self._build_multi_person_message(people)
+            message = self._build_multi_person_message(people, mode)
+            current_signature = self._multi_person_scene_signature(people)
 
             if now < self.multi_person_anchor_until:
-                # si le message change vraiment, on peut le réémettre
-                if message == self.multi_person_anchor:
+                if current_signature == self.multi_person_anchor:
                     return []
 
             if self._can_emit_globally(message, now):
-                self.multi_person_anchor = message
+                self.multi_person_anchor = current_signature
                 self.multi_person_anchor_until = now + self.multi_person_anchor_duration
 
                 self.last_global_message = message
@@ -303,7 +350,6 @@ class DecisionEngine:
             if not obj.get("already_announced"):
                 msg = self._build_initial_message(obj)
             else:
-                # même si déjà annoncé, si la direction a changé -> update
                 msg = self._build_update_message(obj, mode)
 
         elif state in ("APPROACHING", "STABLE", "MOVING_LEFT", "MOVING_RIGHT"):
