@@ -1,102 +1,154 @@
-import cv2
-
-from perception.detector import ObjectDetector
-from scene.scene_memory import SceneMemory
-from scene.state_machine import StateMachine
-from decision.decision_engine import DecisionEngine
-from audio.audio_engine import AudioEngine
-from context.context_manager import ContextManager
+import time
 
 
-def draw_objects(frame, objects):
+class ContextManager:
     """
-    Affichage visuel pour debug.
+    Context Manager v2.1
+
+    Rôle :
+    - filtrer le spam final
+    - laisser passer les messages utiles
+    - ne pas devenir trop silencieux
+    - ne pas modifier le sens du message
     """
-    for obj in objects.values():
-        if obj.get("missing_frames", 0) > 0:
-            continue
 
-        x1, y1, x2, y2 = obj["bbox"]
-        x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
+    def __init__(self):
+        self.last_message = None
+        self.last_message_time = 0.0
 
-        label = obj["label"]
-        obj_id = obj["id"]
-        state = obj["state"]
-        direction = obj["direction"]
+        self.last_scene_signature = None
+        self.pending_scene_signature = None
+        self.pending_scene_since = None
 
-        text = f"{label} ID:{obj_id} {state} {direction}"
+        self.MIN_SPEAK_INTERVAL = 1.2
+        self.SAME_MESSAGE_INTERVAL = 3.0
+        self.SCENE_STABILITY_TIME = 0.5
 
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-        cv2.putText(
-            frame,
-            text,
-            (x1, max(20, y1 - 10)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 255, 255),
-            2
-        )
+        self.last_priority = 0
+        self.has_spoken_once = False
 
+    # ------------------------------------------------------
+    # Priorité message
+    # ------------------------------------------------------
+    def _message_priority(self, message: str) -> int:
+        if not message:
+            return 0
 
-def main():
-    print("🚀 Assistive AI v2 started")
+        msg = message.lower()
 
-    detector = ObjectDetector()
-    memory = SceneMemory()
-    state_machine = StateMachine()
-    decision_engine = DecisionEngine()
-    context_manager = ContextManager()
-    audio = AudioEngine()
+        if "close" in msg:
+            return 3
 
-    cap = cv2.VideoCapture(0)
+        if "two persons" in msg:
+            return 3
 
-    if not cap.isOpened():
-        print("❌ Erreur : impossible d'ouvrir la caméra.")
-        return
+        if "person" in msg or "clear" in msg:
+            return 2
 
-    try:
-        while True:
-            ret, frame = cap.read()
+        return 1
 
-            if not ret:
-                print("❌ Erreur : lecture frame impossible.")
-                break
+    # ------------------------------------------------------
+    # Signature scène
+    # ------------------------------------------------------
+    def build_scene_signature(self, objects):
+        if objects is None:
+            return tuple()
 
-            # 1. Détection
-            detections = detector.detect(frame)
+        persons = []
+        others = []
 
-            # 2. Mémoire de scène
-            objects = memory.update(detections)
+        for obj in objects:
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("missing_frames", 0) > 0:
+                continue
 
-            # 3. Machine d'états
-            objects = state_machine.update(objects)
+            label = obj.get("label", "")
+            direction = obj.get("direction", "center")
 
-            # 4. Décision primaire
-            messages = decision_engine.decide(objects)
+            if label == "person":
+                persons.append(direction)
+            else:
+                others.append((label, direction))
 
-            # 5. Filtrage contextuel final
-            for msg in messages:
-                final_msg = context_manager.process(list(objects.values()), msg)
+        persons.sort()
+        others.sort()
 
-                if final_msg:
-                    print(f"[FINAL SPEAK] {final_msg}")
-                    audio.speak(final_msg)
+        return (tuple(persons), tuple(others[:2]))
 
-            # 6. Debug visuel
-            draw_objects(frame, objects)
+    # ------------------------------------------------------
+    # Stabilité scène
+    # ------------------------------------------------------
+    def is_scene_stable(self, new_scene_signature):
+        now = time.time()
 
-            cv2.imshow("Assistive AI v2", frame)
+        if self.pending_scene_signature != new_scene_signature:
+            self.pending_scene_signature = new_scene_signature
+            self.pending_scene_since = now
+            return False
 
-            # ESC pour quitter
-            if cv2.waitKey(1) == 27:
-                break
+        if self.pending_scene_since is None:
+            self.pending_scene_since = now
+            return False
 
-    finally:
-        print("🛑 Stopping system...")
-        cap.release()
-        cv2.destroyAllWindows()
-        audio.stop()
+        return (now - self.pending_scene_since) >= self.SCENE_STABILITY_TIME
 
+    # ------------------------------------------------------
+    # Process
+    # ------------------------------------------------------
+    def process(self, objects, message):
+        now = time.time()
 
-if __name__ == "__main__":
-    main()
+        if not message:
+            return None
+
+        scene_signature = self.build_scene_signature(objects)
+        priority = self._message_priority(message)
+
+        # 1. premier message -> autorisé
+        if not self.has_spoken_once:
+            self.has_spoken_once = True
+            self.last_message = message
+            self.last_message_time = now
+            self.last_scene_signature = scene_signature
+            self.last_priority = priority
+            return message
+
+        # 2. close et two persons : passent plus facilement
+        if priority >= 3:
+            if (
+                message == self.last_message
+                and (now - self.last_message_time) < 2.0
+            ):
+                return None
+
+            self.last_message = message
+            self.last_message_time = now
+            self.last_scene_signature = scene_signature
+            self.last_priority = priority
+            return message
+
+        # 3. légère stabilisation
+        if not self.is_scene_stable(scene_signature):
+            return None
+
+        # 4. anti-répétition stricte
+        if (
+            scene_signature == self.last_scene_signature
+            and message == self.last_message
+            and (now - self.last_message_time) < self.SAME_MESSAGE_INTERVAL
+        ):
+            return None
+
+        # 5. cooldown global
+        if (now - self.last_message_time) < self.MIN_SPEAK_INTERVAL:
+            if priority <= self.last_priority:
+                return None
+
+        # validation
+        self.last_message = message
+        self.last_message_time = now
+        self.last_scene_signature = scene_signature
+        self.last_priority = priority
+
+        return message

@@ -42,7 +42,6 @@ def draw_objects(frame, objects):
 def main():
     print("🚀 Assistive AI v2 started")
 
-    # Modules
     detector = ObjectDetector()
     memory = SceneMemory()
     state_machine = StateMachine()
@@ -50,7 +49,6 @@ def main():
     context_manager = ContextManager()
     audio = AudioEngine()
 
-    # Camera
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
@@ -65,39 +63,27 @@ def main():
                 print("❌ Erreur : lecture frame impossible.")
                 break
 
-            # -----------------------------
-            # 1. PERCEPTION
-            # -----------------------------
+            # 1. Détection
             detections = detector.detect(frame)
 
-            # -----------------------------
-            # 2. MÉMOIRE
-            # -----------------------------
+            # 2. Mémoire
             objects = memory.update(detections)
 
-            # -----------------------------
-            # 3. ÉTAT
-            # -----------------------------
+            # 3. État
             objects = state_machine.update(objects)
 
-            # -----------------------------
-            # 4. DÉCISION
-            # -----------------------------
+            # 4. Décision
             messages = decision_engine.decide(objects)
 
-            # -----------------------------
-            # 5. CONTEXTE (IMPORTANT)
-            # -----------------------------
+            # 5. Contexte final
             for msg in messages:
-                final_msg = context_manager.process(objects.values(), msg)
+                final_msg = context_manager.process(list(objects.values()), msg)
 
                 if final_msg:
                     print(f"[FINAL SPEAK] {final_msg}")
                     audio.speak(final_msg)
 
-            # -----------------------------
-            # 6. DEBUG VISUEL
-            # -----------------------------
+            # 6. Debug visuel
             draw_objects(frame, objects)
 
             cv2.imshow("Assistive AI v2", frame)

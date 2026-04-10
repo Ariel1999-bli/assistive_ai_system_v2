@@ -3,6 +3,13 @@ import config
 
 
 class DecisionEngine:
+    """
+    Decision Engine avec :
+    - modes (navigation / exploration / human_priority)
+    - multi-personnes
+    - ré-annonce intelligente
+    - mise à jour si la direction change
+    """
 
     def __init__(self):
         self.last_global_message = None
@@ -10,20 +17,20 @@ class DecisionEngine:
 
         self.global_cooldown = 0.8
         self.same_message_cooldown = 2.5
-        self.long_reannounce_cooldown = 6.0
-        self.silence_after_speak = 1.5
+        self.long_reannounce_cooldown = 4.0
+        self.silence_after_speak = 1.0
 
         self.current_focus_id = None
         self.focus_locked_until = 0.0
-        self.focus_lock_duration = 2.5
+        self.focus_lock_duration = 2.0
 
-        # 🔥 MULTI PERSON STABILITY
+        # multi-personne : léger verrou, mais pas trop agressif
         self.multi_person_anchor = None
         self.multi_person_anchor_until = 0.0
-        self.multi_person_anchor_duration = 5.0
+        self.multi_person_anchor_duration = 2.0
 
     # =========================================================
-    # NORMALISATION
+    # NORMALIZATION
     # =========================================================
     def _normalize_objects(self, objects):
         if objects is None:
@@ -42,10 +49,31 @@ class DecisionEngine:
         bbox = obj.get("bbox")
         if not bbox or len(bbox) != 4:
             return 0.0
+
         x1, y1, x2, y2 = bbox
         return max(0.0, x2 - x1) * max(0.0, y2 - y1)
 
-    def _priority_key(self, obj):
+    # =========================================================
+    # MODE LOGIC
+    # =========================================================
+    def _is_allowed_in_mode(self, obj, mode):
+        label = obj.get("label", "")
+
+        if label in config.IGNORE_OBJECTS:
+            return False
+
+        if mode == "navigation":
+            return label in config.IMPORTANT_OBJECTS
+
+        if mode == "exploration":
+            return label in config.EXPLORATION_OBJECTS
+
+        if mode == "human_priority":
+            return label in config.EXPLORATION_OBJECTS or label in config.IMPORTANT_OBJECTS
+
+        return label in config.IMPORTANT_OBJECTS
+
+    def _priority_key(self, obj, mode):
         label = obj.get("label", "")
         proximity = obj.get("proximity_score", 0.0)
         size = self._compute_size(obj)
@@ -53,13 +81,25 @@ class DecisionEngine:
         if label == "person":
             return (100, proximity, size)
 
-        return (config.OBJECT_PRIORITIES.get(label, 0), proximity, size)
+        base_priority = config.OBJECT_PRIORITIES.get(label, 0)
 
-    def _filter_semantic_objects(self, visible_objects):
-        return [
+        if mode == "exploration":
+            return (base_priority, size, proximity)
+
+        return (base_priority, proximity, size)
+
+    def _filter_objects_by_mode(self, visible_objects, mode):
+        filtered = [
             obj for obj in visible_objects
-            if obj.get("label") not in config.IGNORE_OBJECTS
+            if self._is_allowed_in_mode(obj, mode)
         ]
+
+        if mode == "human_priority":
+            people = [o for o in filtered if o.get("label") == "person"]
+            if people:
+                return people
+
+        return filtered
 
     # =========================================================
     # HELPERS
@@ -74,60 +114,84 @@ class DecisionEngine:
         return [o for o in objs if o.get("label") == "person"]
 
     def _is_close_object(self, obj):
-        if obj.get("label") == "person":
-            return obj.get("proximity_score", 0) >= config.PERSON_CLOSE_THRESHOLD
-        return obj.get("proximity_score", 0) >= config.OBJECT_CLOSE_THRESHOLD
+        label = obj.get("label", "")
+        proximity = obj.get("proximity_score", 0.0)
+
+        if label == "person":
+            return proximity >= config.PERSON_CLOSE_THRESHOLD
+
+        return proximity >= config.OBJECT_CLOSE_THRESHOLD
+
+    def _direction_changed(self, obj):
+        current_direction = obj.get("direction", "center")
+        previous_direction = obj.get("previous_direction", None)
+
+        if previous_direction is None:
+            return False
+
+        return current_direction != previous_direction
 
     # =========================================================
-    # MULTI PERSON MESSAGE
+    # MESSAGE BUILDERS
     # =========================================================
     def _build_multi_person_message(self, people):
+        """
+        Version stable mais toujours utile.
+        """
+        directions = sorted([p.get("direction", "center") for p in people[:2]])
 
-        people = sorted(
-            people,
-            key=lambda o: (
-                self._direction_rank(o.get("direction")),
-                -o.get("proximity_score", 0)
-            )
-        )
-
-        d1 = people[0].get("direction")
-        d2 = people[1].get("direction")
-
-        # 👉 SIMPLIFICATION VOLONTAIRE (clé UX)
-        if d1 == "center" or d2 == "center":
-            return "Two persons ahead"
-
-        if d1 == "left" and d2 == "right":
+        if directions == ["left", "right"]:
             return "Two persons, one on your left and one on your right"
 
         return "Two persons ahead"
 
-    # =========================================================
-    # MESSAGE BUILD
-    # =========================================================
     def _build_initial_message(self, obj):
-        label = self._pretty_label(obj.get("label"))
+        label = self._pretty_label(obj.get("label", "object"))
         direction = obj.get("direction", "center")
 
         if direction == "center":
             return f"{label} ahead"
         return f"{label} on your {direction}"
 
-    def _build_update_message(self, obj):
+    def _build_update_message(self, obj, mode):
+        state = obj.get("state", "STABLE")
+        direction = obj.get("direction", "center")
+        label = self._pretty_label(obj.get("label", "object"))
 
-        if obj.get("state") == "APPROACHING":
-            if obj.get("label") != "person":
-                return None
-
-            if not self._is_close_object(obj):
-                return None
-
-            direction = obj.get("direction", "center")
-
+        # 1. Si la direction change, on autorise une mise à jour
+        if self._direction_changed(obj):
             if direction == "center":
-                return "Close ahead"
-            return f"Close on your {direction}"
+                return f"{label} ahead"
+            return f"{label} on your {direction}"
+
+        # 2. Gestion du close
+        if state == "APPROACHING":
+            raw_label = obj.get("label", "")
+
+            if raw_label == "person":
+                if not self._is_close_object(obj):
+                    return None
+
+                if direction == "center":
+                    return "Close ahead"
+                return f"Close on your {direction}"
+
+            if mode == "exploration":
+                if not self._is_close_object(obj):
+                    return None
+
+                if direction == "center":
+                    return "Close ahead"
+                return f"Close on your {direction}"
+
+            return None
+
+        # 3. En exploration, on peut tolérer left/right simples pour mouvement
+        if mode == "exploration":
+            if state == "MOVING_LEFT":
+                return "Left"
+            if state == "MOVING_RIGHT":
+                return "Right"
 
         return None
 
@@ -137,10 +201,9 @@ class DecisionEngine:
         return None
 
     # =========================================================
-    # CONTROLES
+    # EMISSION CONTROL
     # =========================================================
     def _can_emit_globally(self, message, now):
-
         if (now - self.last_global_time) < self.silence_after_speak:
             return False
 
@@ -154,9 +217,9 @@ class DecisionEngine:
         return True
 
     def _can_emit_for_object(self, obj, message, now):
-
-        if obj.get("state") == "STABLE":
-            return False
+        # si direction change -> on autorise
+        if self._direction_changed(obj):
+            return True
 
         if obj.get("last_announcement") != message:
             return True
@@ -167,7 +230,6 @@ class DecisionEngine:
     # FOCUS
     # =========================================================
     def _select_focus_object(self, visible_objects, now):
-
         if self.current_focus_id and now <= self.focus_locked_until:
             for obj in visible_objects:
                 if obj.get("id") == self.current_focus_id:
@@ -182,39 +244,41 @@ class DecisionEngine:
     # MAIN
     # =========================================================
     def decide(self, objects):
-
         now = time.time()
-        objects = self._normalize_objects(objects)
+        mode = getattr(config, "SYSTEM_MODE", "navigation")
 
+        objects = self._normalize_objects(objects)
         if not objects:
             return []
 
         visible = [o for o in objects if o.get("missing_frames", 0) == 0]
-        visible = self._filter_semantic_objects(visible)
-
         if not visible:
             return []
 
-        visible = sorted(visible, key=self._priority_key, reverse=True)
+        visible = self._filter_objects_by_mode(visible, mode)
+        if not visible:
+            return []
 
-        # =====================================================
-        # 🔥 MULTI PERSON FINAL (STABLE)
-        # =====================================================
+        visible = sorted(
+            visible,
+            key=lambda obj: self._priority_key(obj, mode),
+            reverse=True
+        )
+
+        # -----------------------------------------------------
+        # MULTI-PERSON PRIORITY
+        # -----------------------------------------------------
         people = self._get_visible_people(visible)
 
         if len(people) >= 2:
-
-            # 🔒 maintien du message pendant X secondes
-            if now < self.multi_person_anchor_until:
-                return []
-
             message = self._build_multi_person_message(people)
 
-            if message == self.multi_person_anchor:
-                return []
+            if now < self.multi_person_anchor_until:
+                # si le message change vraiment, on peut le réémettre
+                if message == self.multi_person_anchor:
+                    return []
 
             if self._can_emit_globally(message, now):
-
                 self.multi_person_anchor = message
                 self.multi_person_anchor_until = now + self.multi_person_anchor_duration
 
@@ -225,30 +289,28 @@ class DecisionEngine:
 
             return []
 
-        # =====================================================
+        # -----------------------------------------------------
         # SINGLE OBJECT
-        # =====================================================
+        # -----------------------------------------------------
         obj = self._select_focus_object(visible, now)
-
         if obj is None:
             return []
 
         state = obj.get("state")
+        msg = None
 
         if state == "NEW":
             if not obj.get("already_announced"):
                 msg = self._build_initial_message(obj)
             else:
-                return []
+                # même si déjà annoncé, si la direction a changé -> update
+                msg = self._build_update_message(obj, mode)
 
-        elif state == "APPROACHING":
-            msg = self._build_update_message(obj)
+        elif state in ("APPROACHING", "STABLE", "MOVING_LEFT", "MOVING_RIGHT"):
+            msg = self._build_update_message(obj, mode)
 
         elif state == "GONE":
             msg = self._build_clear_message(obj)
-
-        else:
-            return []
 
         if not msg:
             return []
