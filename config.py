@@ -134,4 +134,13 @@ VLM_ENABLED = False           # True quand le modèle VLM est disponible
 # HAILO-8
 # ==============================
 USE_HAILO = False             # True pour activer l'inférence Hailo-8
-HAILO_MODEL_PATH = "models/yolov8n.hef"  #Il faudra convertir le modèle .pt → .hef via le Hailo Model Zoo.
+HAILO_MODEL_PATH = "models/yolov8n.hef"
+
+# ------------------------------
+# Profil RPi5 + Hailo-8
+# Décommenter le bloc ci-dessous une fois sur le hardware :
+# ------------------------------
+# USE_HAILO = True
+# HAILO_MODEL_PATH = "models/yolov8n.hef"  # téléchargé par setup_rpi5.sh
+# VLM_ENABLED = False                       # True quand Moondream2 est installé
+# TTS_RATE = 180                            # légèrement plus lent sur RPi5
