@@ -106,3 +106,32 @@ OBJECT_CLOSE_THRESHOLD = 0.82
 # ==============================
 TTS_RATE = 210
 SPEAK_COOLDOWN = 0.3
+
+# ==============================
+# SMOOTHING
+# ==============================
+SMOOTHING_ALPHA = 0.3  # 0 = tout lissé, 1 = pas de lissage
+
+# ==============================
+# RISK SCORING
+# ==============================
+RISK_WEIGHTS = {
+    "car": 3.0,
+    "bicycle": 2.0,
+    "person": 1.5,
+    "default": 1.0,
+}
+RISK_HIGH_THRESHOLD = 0.7    # risque élevé → danger immédiat
+RISK_MEDIUM_THRESHOLD = 0.4  # risque moyen → attention
+
+# ==============================
+# VLM NARRATOR
+# ==============================
+VLM_NARRATOR_INTERVAL = 7.0  # secondes entre chaque description de scène
+VLM_ENABLED = False           # True quand le modèle VLM est disponible
+
+# ==============================
+# HAILO-8
+# ==============================
+USE_HAILO = False             # True pour activer l'inférence Hailo-8
+HAILO_MODEL_PATH = "models/yolov8n.hef"  #Il faudra convertir le modèle .pt → .hef via le Hailo Model Zoo.

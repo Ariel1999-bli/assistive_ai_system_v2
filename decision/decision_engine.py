@@ -76,17 +76,18 @@ class DecisionEngine:
     def _priority_key(self, obj, mode):
         label = obj.get("label", "")
         proximity = obj.get("proximity_score", 0.0)
+        risk = obj.get("risk_score", 0.0)
         size = self._compute_size(obj)
 
         if label == "person":
-            return (100, proximity, size)
+            return (100, risk, proximity, size)
 
         base_priority = config.OBJECT_PRIORITIES.get(label, 0)
 
         if mode == "exploration":
-            return (base_priority, size, proximity)
+            return (base_priority, risk, size, proximity)
 
-        return (base_priority, proximity, size)
+        return (base_priority, risk, proximity, size)
 
     def _filter_objects_by_mode(self, visible_objects, mode):
         filtered = [
@@ -116,6 +117,11 @@ class DecisionEngine:
     def _is_close_object(self, obj):
         label = obj.get("label", "")
         proximity = obj.get("proximity_score", 0.0)
+        risk = obj.get("risk_score", 0.0)
+
+        # Risque élevé → considéré comme proche peu importe la taille
+        if risk >= config.RISK_HIGH_THRESHOLD:
+            return True
 
         if label == "person":
             return proximity >= config.PERSON_CLOSE_THRESHOLD

@@ -3,6 +3,7 @@ import cv2
 from perception.detector import ObjectDetector
 from scene.scene_memory import SceneMemory
 from scene.state_machine import StateMachine
+from scene.scene_narrator import SceneNarrator
 from decision.decision_engine import DecisionEngine
 from audio.audio_engine import AudioEngine
 from context.context_manager import ContextManager
@@ -23,8 +24,9 @@ def draw_objects(frame, objects):
         obj_id = obj["id"]
         state = obj["state"]
         direction = obj["direction"]
+        risk = obj.get("risk_score", 0.0)
 
-        text = f"{label} ID:{obj_id} {state} {direction}"
+        text = f"{label} ID:{obj_id} {state} {direction} R:{risk:.2f}"
 
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
@@ -48,6 +50,7 @@ def main():
     decision_engine = DecisionEngine()
     context_manager = ContextManager()
     audio = AudioEngine()
+    narrator = SceneNarrator(audio)
 
     cap = cv2.VideoCapture(0)
 
@@ -83,7 +86,10 @@ def main():
                     print(f"[FINAL SPEAK] {final_msg}")
                     audio.speak(final_msg)
 
-            # 6. Debug visuel
+            # 6. Narrateur de scène périodique (VLM / règles)
+            narrator.update(frame, objects)
+
+            # 7. Debug visuel
             draw_objects(frame, objects)
 
             cv2.imshow("Assistive AI v2", frame)
@@ -96,6 +102,7 @@ def main():
         print("🛑 Stopping system...")
         cap.release()
         cv2.destroyAllWindows()
+        narrator.stop()
         audio.stop()
 
 

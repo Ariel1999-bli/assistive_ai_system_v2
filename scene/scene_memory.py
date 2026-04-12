@@ -89,21 +89,34 @@ class SceneMemory:
         bbox: Tuple[float, float, float, float]
     ) -> float:
         """
-        Score simple de proximité basé sur :
-        - taille relative de la bbox
-        - position basse dans l'image
-
-        Plus le score est élevé, plus l'objet est considéré proche.
+        Score de proximité basé sur la hauteur de la bbox relative à la frame.
+        bbox_height / frame_height → 0.0 (loin) à 1.0 (très proche).
         """
-        _, _, _, y2 = bbox
-        area = self._bbox_area(bbox)
+        x1, y1, x2, y2 = bbox
+        bbox_height = max(0.0, y2 - y1)
+        return min(bbox_height / float(config.FRAME_HEIGHT), 1.0)
 
-        frame_area = float(config.FRAME_WIDTH * config.FRAME_HEIGHT)
-        area_ratio = area / frame_area if frame_area > 0 else 0.0
-        bottom_ratio = y2 / float(config.FRAME_HEIGHT)
+    def _compute_risk_score(self, obj: dict) -> float:
+        """
+        Score de risque combinant :
+        - proximité (poids 0.5)
+        - approche (variation de proximité, poids 0.3)
+        - vitesse de déplacement (poids 0.2)
+        """
+        label = obj.get("label", "")
+        proximity = obj.get("proximity_score", 0.0)
+        prev_proximity = obj.get("previous_proximity_score")
+        vx, vy = obj.get("velocity", (0.0, 0.0))
 
-        proximity = (0.65 * area_ratio) + (0.35 * bottom_ratio)
-        return float(proximity)
+        proximity_delta = (proximity - prev_proximity) if prev_proximity is not None else 0.0
+        approach_factor = max(0.0, proximity_delta * 8.0)
+
+        speed = math.sqrt(vx ** 2 + vy ** 2)
+        speed_factor = min(speed / 300.0, 1.0)
+
+        weight = config.RISK_WEIGHTS.get(label, config.RISK_WEIGHTS["default"])
+        risk = weight * (0.5 * proximity + 0.3 * approach_factor + 0.2 * speed_factor)
+        return min(risk, 1.0)
 
     # ------------------------------------------------------------------
     # Gestion d'objets
@@ -123,6 +136,7 @@ class SceneMemory:
             "label": detection["label"],
             "bbox": bbox,
             "center": center,
+            "smoothed_center": center,
             "previous_center": None,
             "confidence": detection["confidence"],
 
@@ -138,6 +152,10 @@ class SceneMemory:
             "previous_proximity_score": None,
             "state": "NEW",
             "last_state_change": now,
+
+            # vélocité et risque
+            "velocity": (0.0, 0.0),
+            "risk_score": 0.0,
 
             # mémoire sémantique
             "already_announced": False,
@@ -160,15 +178,33 @@ class SceneMemory:
         old_direction = obj["direction"]
         old_proximity = obj["proximity_score"]
         old_center = obj["center"]
+        old_smoothed = obj.get("smoothed_center", old_center)
 
         bbox = detection["bbox"]
         center = self._bbox_center(bbox)
         direction = self._compute_direction(center)
         proximity_score = self._compute_proximity_score(bbox)
 
+        # Lissage exponentiel sur la position
+        alpha = config.SMOOTHING_ALPHA
+        smoothed_center = (
+            alpha * center[0] + (1.0 - alpha) * old_smoothed[0],
+            alpha * center[1] + (1.0 - alpha) * old_smoothed[1],
+        )
+
+        # Vélocité (pixels/seconde) sur la position lissée
+        dt = now - obj.get("last_seen", now)
+        if dt > 0.0:
+            vx = (smoothed_center[0] - old_smoothed[0]) / dt
+            vy = (smoothed_center[1] - old_smoothed[1]) / dt
+        else:
+            vx, vy = obj.get("velocity", (0.0, 0.0))
+
         obj["bbox"] = bbox
         obj["previous_center"] = old_center
         obj["center"] = center
+        obj["smoothed_center"] = smoothed_center
+        obj["velocity"] = (vx, vy)
         obj["confidence"] = detection["confidence"]
         obj["last_seen"] = now
         obj["missing_frames"] = 0
@@ -179,6 +215,8 @@ class SceneMemory:
 
         obj["previous_proximity_score"] = old_proximity
         obj["proximity_score"] = proximity_score
+
+        obj["risk_score"] = self._compute_risk_score(obj)
 
         return obj
 
