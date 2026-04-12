@@ -29,6 +29,7 @@ TRACK_RECENCY_BONUS = 0.12
 # ==============================
 STATE_STABLE_TIME = 1.5
 STATE_APPROACH_THRESHOLD = 0.12
+STATE_MOVE_THRESHOLD_PX = 18.0  # seuil horizontal pour détecter un mouvement
 
 # ==============================
 # SEMANTIC FILTERING
@@ -122,25 +123,15 @@ RISK_WEIGHTS = {
     "default": 1.0,
 }
 RISK_HIGH_THRESHOLD = 0.7    # risque élevé → danger immédiat
-RISK_MEDIUM_THRESHOLD = 0.4  # risque moyen → attention
 
 # ==============================
 # VLM NARRATOR
 # ==============================
 VLM_NARRATOR_INTERVAL = 7.0  # secondes entre chaque description de scène
-VLM_ENABLED = False           # True quand le modèle VLM est disponible
+VLM_ENABLED = False           # True quand Moondream2 est installé (RPi5)
 
 # ==============================
 # HAILO-8
 # ==============================
 USE_HAILO = False             # True pour activer l'inférence Hailo-8
-HAILO_MODEL_PATH = "models/yolov8n.hef"
-
-# ------------------------------
-# Profil RPi5 + Hailo-8
-# Décommenter le bloc ci-dessous une fois sur le hardware :
-# ------------------------------
-# USE_HAILO = True
-# HAILO_MODEL_PATH = "models/yolov8n.hef"  # téléchargé par setup_rpi5.sh
-# VLM_ENABLED = False                       # True quand Moondream2 est installé
-# TTS_RATE = 180                            # légèrement plus lent sur RPi5
+HAILO_MODEL_PATH = "models/yolov8n.hef"  # téléchargé par setup_rpi5.sh

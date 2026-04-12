@@ -33,11 +33,9 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements_rpi5.txt
 
-echo "=== [5/5] Téléchargement du modèle Hailo ==="
+echo "=== [5/6] Téléchargement du modèle Hailo (YOLOv8n) ==="
 mkdir -p models
 
-# YOLOv8n pré-compilé pour Hailo-8 (depuis Hailo Model Zoo)
-# Option A : téléchargement direct depuis le Model Zoo officiel
 HAILO_MODEL_URL="https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.13/hailo8/yolov8n.hef"
 
 if [ ! -f "models/yolov8n.hef" ]; then
@@ -48,11 +46,36 @@ else
     echo "models/yolov8n.hef déjà présent."
 fi
 
+echo "=== [6/6] Téléchargement du modèle VLM (Moondream2) ==="
+# Moondream2 est téléchargé automatiquement au premier lancement via HuggingFace.
+# Ce script pré-télécharge le modèle pour éviter un délai au démarrage.
+python3 - <<'PYEOF'
+import sys
+print("Téléchargement de Moondream2 depuis HuggingFace (~1.7GB)...")
+try:
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    model_id = "vikhyatk/moondream2"
+    revision = "2025-01-09"
+    tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        revision=revision,
+        trust_remote_code=True,
+    )
+    print("Moondream2 téléchargé avec succès.")
+except Exception as e:
+    print(f"Erreur : {e}")
+    print("Le modèle sera téléchargé au premier lancement.")
+    sys.exit(0)
+PYEOF
+
 echo ""
 echo "=== Setup terminé ==="
+echo ""
 echo "Pour lancer le système :"
 echo "  source .venv/bin/activate"
 echo "  python main.py"
 echo ""
-echo "Pour activer Hailo-8, mettre dans config.py :"
+echo "Pour activer Hailo-8 + Moondream2, mettre dans config.py :"
 echo "  USE_HAILO = True"
+echo "  VLM_ENABLED = True"

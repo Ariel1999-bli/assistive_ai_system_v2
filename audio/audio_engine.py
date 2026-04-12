@@ -36,24 +36,27 @@ class AudioEngine:
             return
 
         try:
-            # si la file est pleine, on jette les vieux messages
             if self.queue.full():
-                self._flush_queue()
+                self._drain_queue()
 
             self.queue.put_nowait(message)
             print(f"[AUDIO_QUEUE] {message}")
         except queue.Full:
             print(f"[AUDIO_DROP] {message}")
 
-    def _flush_queue(self):
+    def _drain_queue(self) -> str | None:
+        """
+        Vide la file et retourne le dernier message (le plus récent), ou None.
+        Utilisé à deux endroits : avant ajout si pleine, et dans le worker.
+        """
+        latest = None
         while not self.queue.empty():
             try:
-                self.queue.get_nowait()
+                latest = self.queue.get_nowait()
                 self.queue.task_done()
-            except queue.Empty:
+            except (queue.Empty, ValueError):
                 break
-            except ValueError:
-                break
+        return latest
 
     def _can_speak(self, message: str, now: float) -> bool:
         """
@@ -102,17 +105,9 @@ class AudioEngine:
 
             try:
                 # latest-useful behavior : on garde le plus récent
-                latest_message = message
-                while not self.queue.empty():
-                    try:
-                        latest_message = self.queue.get_nowait()
-                        self.queue.task_done()
-                    except queue.Empty:
-                        break
-                    except ValueError:
-                        break
-
-                message = latest_message
+                latest = self._drain_queue()
+                if latest is not None:
+                    message = latest
                 now = time.time()
 
                 if self._can_speak(message, now):

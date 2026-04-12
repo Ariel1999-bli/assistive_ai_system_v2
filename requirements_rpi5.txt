@@ -23,3 +23,12 @@ pyttsx3
 # Hailo Runtime Python bindings
 # Installé via apt (voir setup_rpi5.sh), pas via pip :
 # sudo apt install hailo-all
+
+# ==============================
+# VLM — Moondream2
+# ==============================
+moondream
+transformers
+Pillow
+einops
+timm

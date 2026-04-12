@@ -4,6 +4,35 @@ from collections import Counter
 
 import config
 
+# Moondream2 chargé une seule fois au démarrage si VLM_ENABLED
+_moondream_model = None
+_moondream_tokenizer = None
+
+
+def _load_moondream():
+    global _moondream_model, _moondream_tokenizer
+    if _moondream_model is not None:
+        return True
+    try:
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        model_id = "vikhyatk/moondream2"
+        revision = "2025-01-09"
+        print("[VLM] Chargement de Moondream2...")
+        _moondream_tokenizer = AutoTokenizer.from_pretrained(
+            model_id, revision=revision
+        )
+        _moondream_model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            revision=revision,
+            trust_remote_code=True,
+        )
+        _moondream_model.eval()
+        print("[VLM] Moondream2 prêt.")
+        return True
+    except Exception as e:
+        print(f"[VLM] Erreur chargement Moondream2 : {e}")
+        return False
+
 
 class SceneNarrator:
     """
@@ -52,12 +81,17 @@ class SceneNarrator:
         counts = Counter(o["label"] for o in visible)
         parts = []
 
+        def _direction_phrase(prefix: str, obj: dict) -> str:
+            d = obj.get("direction", "center")
+            return f"{prefix} ahead" if d == "center" else f"{prefix} on your {d}"
+
+        def _first_by_label(label: str) -> dict:
+            return next(o for o in visible if o["label"] == label)
+
         # Personnes en premier
         n_persons = counts.get("person", 0)
         if n_persons == 1:
-            person = next(o for o in visible if o["label"] == "person")
-            d = person.get("direction", "center")
-            parts.append("one person ahead" if d == "center" else f"one person on your {d}")
+            parts.append(_direction_phrase("one person", _first_by_label("person")))
         elif n_persons > 1:
             parts.append(f"{n_persons} persons around you")
 
@@ -65,10 +99,8 @@ class SceneNarrator:
         for label, count in counts.items():
             if label == "person" or len(parts) >= 3:
                 continue
-            obj = next(o for o in visible if o["label"] == label)
-            d = obj.get("direction", "center")
             if count == 1:
-                parts.append(f"a {label} ahead" if d == "center" else f"a {label} on your {d}")
+                parts.append(_direction_phrase(f"a {label}", _first_by_label(label)))
             else:
                 parts.append(f"{count} {label}s nearby")
 
@@ -78,25 +110,46 @@ class SceneNarrator:
         return "Scene: " + ", ".join(parts)
 
     # ------------------------------------------------------------------
-    # Description VLM (à implémenter quand le hardware est disponible)
+    # Description VLM — Moondream2
     # ------------------------------------------------------------------
     def _build_vlm_description(self, frame) -> str | None:
         """
-        Intégration VLM — remplacer ce stub par l'appel au modèle.
-
-        Exemples de modèles compatibles RPi5 + Hailo-8 :
-        - Moondream2 (1.7B) via llama.cpp
-        - MobileVLM 1.7B
-        - LLaVA-Phi 3B (quantisé 4-bit)
-
-        Exemple d'appel (à décommenter et adapter) :
-            response = vlm_model.query(
-                frame,
-                "Describe what is directly in front of me in one short sentence."
-            )
-            return response
+        Génère une description de scène via Moondream2.
+        Activer avec VLM_ENABLED = True dans config.py.
+        Nécessite ~1.7GB RAM supplémentaire.
         """
-        return None  # stub : pas encore implémenté
+        if not _load_moondream():
+            return None
+
+        try:
+            import cv2
+            from PIL import Image
+
+            # Convertir la frame OpenCV (BGR) en PIL Image (RGB)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(rgb)
+
+            # Encode l'image
+            image_embeds = _moondream_model.encode_image(pil_image)
+
+            # Requête orientée navigation pour malvoyant
+            prompt = (
+                "I am a visually impaired person wearing smart glasses. "
+                "In one short sentence, describe only what is directly in front of me "
+                "that I should be aware of to move safely."
+            )
+
+            answer = _moondream_model.answer_question(
+                image_embeds,
+                prompt,
+                _moondream_tokenizer,
+            )
+
+            return answer.strip() if answer else None
+
+        except Exception as e:
+            print(f"[VLM_ERROR] {e}")
+            return None
 
     # ------------------------------------------------------------------
     # Boucle de fond

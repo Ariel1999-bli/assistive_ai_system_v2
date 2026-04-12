@@ -102,14 +102,11 @@ class StateMachine:
             # --------------------------------------------------
             # 4. Mouvement horizontal
             # --------------------------------------------------
-            # seuil simple pour éviter d'interpréter du bruit comme mouvement
-            move_threshold_px = 18.0
-
-            if horizontal_delta <= -move_threshold_px:
+            if horizontal_delta <= -config.STATE_MOVE_THRESHOLD_PX:
                 self._set_state(obj, "MOVING_LEFT", now)
                 continue
 
-            if horizontal_delta >= move_threshold_px:
+            if horizontal_delta >= config.STATE_MOVE_THRESHOLD_PX:
                 self._set_state(obj, "MOVING_RIGHT", now)
                 continue
 

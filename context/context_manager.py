@@ -94,6 +94,15 @@ class ContextManager:
         return (now - self.pending_scene_since) >= self.SCENE_STABILITY_TIME
 
     # ------------------------------------------------------
+    # Mise à jour de l'état interne
+    # ------------------------------------------------------
+    def _commit(self, message, scene_signature, priority, now):
+        self.last_message = message
+        self.last_message_time = now
+        self.last_scene_signature = scene_signature
+        self.last_priority = priority
+
+    # ------------------------------------------------------
     # Process
     # ------------------------------------------------------
     def process(self, objects, message):
@@ -108,10 +117,7 @@ class ContextManager:
         # 1. premier message -> autorisé
         if not self.has_spoken_once:
             self.has_spoken_once = True
-            self.last_message = message
-            self.last_message_time = now
-            self.last_scene_signature = scene_signature
-            self.last_priority = priority
+            self._commit(message, scene_signature, priority, now)
             return message
 
         # 2. close et two persons : passent plus facilement
@@ -122,10 +128,7 @@ class ContextManager:
             ):
                 return None
 
-            self.last_message = message
-            self.last_message_time = now
-            self.last_scene_signature = scene_signature
-            self.last_priority = priority
+            self._commit(message, scene_signature, priority, now)
             return message
 
         # 3. légère stabilisation
@@ -145,10 +148,5 @@ class ContextManager:
             if priority <= self.last_priority:
                 return None
 
-        # validation
-        self.last_message = message
-        self.last_message_time = now
-        self.last_scene_signature = scene_signature
-        self.last_priority = priority
-
+        self._commit(message, scene_signature, priority, now)
         return message
