@@ -14,6 +14,7 @@ Unlike traditional object detection systems, this project goes beyond simple det
 * ⏱ Temporal reasoning
 * 🎯 Intelligent decision-making
 * 🔊 Human-centered audio feedback
+* 🤖 Periodic scene narration via Vision-Language Model (VLM)
 
 👉 The goal is to transform raw visual perception into **useful, minimal, and actionable information**.
 
@@ -23,7 +24,7 @@ Unlike traditional object detection systems, this project goes beyond simple det
 
 The system evolves from:
 
-> ❌ “An object detection system that speaks”
+> ❌ "An object detection system that speaks"
 
 to:
 
@@ -33,51 +34,73 @@ This means:
 
 * Not everything detected is spoken
 * The system **decides what matters**
+* It speaks **only when the scene changes or danger is detected**
 * It behaves closer to **human perception and reasoning**
 
 ---
 
 ## 🧱 System Architecture
 
-The system is modular and follows a cognitive pipeline:
-
 ```
-Perception → Memory → State → Decision → Context → Audio
+Camera
+  │
+  ▼
+Hailo-8 ──► YOLO (real-time, hardware accelerated)
+  │
+  ▼
+SceneMemory + StateMachine   (tracking, states, smoothing, velocity)
+  │
+  ▼
+DecisionEngine               (priority, risk scoring)
+  │
+  ├──► ContextManager ──────► TTS audio  (main loop, < 50ms)
+  │
+  └──► SceneNarrator ────────► TTS audio  (every 7s, VLM or rule-based)
 ```
 
 ### 📂 Project Structure
 
 ```
-perception/        # Object detection (YOLO)
-scene/             # Scene memory and tracking
-decision/          # Decision logic (message generation)
-context/           # Context manager (cognitive filtering)
-audio/             # Text-to-speech system
-main.py            # Main pipeline
-config.py          # System parameters
+perception/
+  detector.py        # Object detection — YOLO (CPU/GPU) or Hailo-8
+scene/
+  scene_memory.py    # Multi-object tracking, smoothing, velocity, risk score
+  state_machine.py   # Object states: NEW, STABLE, APPROACHING, GONE
+  scene_narrator.py  # Periodic scene description (VLM / rule-based)
+decision/
+  decision_engine.py # Object prioritization and message generation
+context/
+  context_manager.py # Cognitive filtering — speaks only when necessary
+audio/
+  audio_engine.py    # Asynchronous TTS engine
+main.py              # Main pipeline
+config.py            # All system parameters
+test_vlm.py          # Standalone VLM test script (webcam or image)
+setup_rpi5.sh        # Automated setup for Raspberry Pi 5 + Hailo-8
+requirements.txt         # PC dependencies
+requirements_rpi5.txt    # RPi5 ARM64 dependencies
 ```
 
 ---
 
 ## ⚙️ Core Components
 
-### 1. 🎥 Perception (Object Detection)
+### 1. 🎥 Perception — Dual Backend
 
-* YOLO-based real-time detection
-* Bounding boxes, labels, and coordinates
-* Works on live camera input
+* **YOLO** (default): runs on CPU or NVIDIA GPU via ultralytics
+* **Hailo-8** (embedded): hardware-accelerated inference on RPi5
+  * Set `USE_HAILO = True` in `config.py`
+  * Requires `yolov8n.hef` (downloaded by `setup_rpi5.sh`)
 
 ---
 
 ### 2. 🧠 Scene Memory
 
-* Tracks objects across frames
-* Assigns unique IDs
-* Stores:
-
-  * position history
-  * proximity score
-  * temporal persistence
+* Tracks objects across frames with unique IDs
+* **Exponential smoothing** on positions (`SMOOTHING_ALPHA = 0.3`)
+* **Velocity** computed per frame (pixels/second)
+* **Proximity score** = `bbox_height / frame_height`
+* **Risk score** combining proximity, approach rate and object type
 
 ---
 
@@ -85,10 +108,8 @@ config.py          # System parameters
 
 Defines object states:
 
-* `NEW`
-* `STABLE`
-* `APPROACHING`
-* `GONE`
+* `NEW` → `STABLE` → `APPROACHING` → `GONE`
+* `MOVING_LEFT` / `MOVING_RIGHT`
 
 👉 Reduces noise and stabilizes perception.
 
@@ -96,53 +117,56 @@ Defines object states:
 
 ### 4. 🎯 Decision Engine
 
-* Selects relevant objects
-* Prioritizes:
-
-  * 👤 people
-  * ⚠ obstacles
-* Generates messages like:
-
+* Filters objects by mode (`navigation`, `exploration`, `human_priority`)
+* Prioritizes by **risk score** then proximity
+* Generates contextual messages:
   * `"Person ahead"`
-  * `"Two persons ahead"`
-  * `"Close ahead"`
+  * `"Close ahead"` (when proximity + risk are high)
+  * `"Two persons, one on your left and one on your right"`
 
 ---
 
-### 5. 🧠 Context Manager (Core Innovation)
+### 5. 🧠 Context Manager
 
-The **Context Manager** is the key component that transforms the system into an intelligent assistant.
-
-It:
-
-* filters repetitive messages
-* stabilizes scene interpretation
-* applies temporal reasoning
-* prioritizes important information
-
-👉 It ensures:
-
-> The system speaks **only when necessary**
+* Filters repetitive messages
+* Applies scene stability detection
+* Speaks **only when necessary**
+* Priority system: danger messages always pass through
 
 ---
 
-### 6. 🔊 Audio Engine
+### 6. 🎙 Scene Narrator
 
-* Asynchronous speech system
-* Non-blocking audio output
-* Smooth real-time interaction
+Runs in a background thread every `VLM_NARRATOR_INTERVAL` seconds (default: 7s).
+
+Two modes:
+* **Rule-based** (default): builds description from tracked objects
+* **VLM** (`VLM_ENABLED = True`): uses Moondream2 for natural language narration
+
+Speaks **only if**:
+* A **danger keyword** is detected (car, dog, stairs, crowd...)
+* The scene has **significantly changed** (Jaccard similarity < 60%)
+
+---
+
+### 7. 🔊 Audio Engine
+
+* Asynchronous speech with dedicated thread
+* Non-blocking — always keeps the latest message
+* Anti-repetition cooldown
 
 ---
 
 ## 🚀 Features
 
-* ✅ Real-time object detection
-* ✅ Multi-object tracking
+* ✅ Real-time object detection (YOLO / Hailo-8)
+* ✅ Multi-object tracking with smoothing
+* ✅ Velocity and risk scoring
 * ✅ Context-aware decision-making
-* ✅ Reduced cognitive overload
-* ✅ Intelligent audio feedback
-* ✅ Multi-person detection support
-* ✅ Scene stability modeling
+* ✅ Danger keyword detection
+* ✅ Intelligent audio — speaks only on change or danger
+* ✅ Periodic VLM scene narration (Moondream2)
+* ✅ Raspberry Pi 5 + Hailo-8 deployment ready
 
 ---
 
@@ -163,31 +187,29 @@ Bottle on your left
 
 ```
 Person ahead
-(silence)
+(silence — scene stable)
 Close ahead
+(silence)
+[NARRATOR] There is a car approaching on your left, be careful.
 ```
 
 ---
 
-## 🔧 Installation
+## 🔧 Installation — PC (Development)
 
 ### 1. Clone the repository
 
 ```bash
 git clone https://github.com/Ariel1999-bli/assistive_ai_system_v2.git
-cd assistive-ai-v2
+cd assistive_ai_system_v2
 ```
 
----
-
-### 2. Create environment (recommended)
+### 2. Create environment
 
 ```bash
-conda create -n assistive-ai python=3.10
-conda activate assistive-ai
+python -m venv .venv
+.venv\Scripts\activate   # Windows
 ```
-
----
 
 ### 3. Install dependencies
 
@@ -195,9 +217,7 @@ conda activate assistive-ai
 pip install -r requirements.txt
 ```
 
----
-
-### 4. Run the system
+### 4. Run
 
 ```bash
 python main.py
@@ -205,52 +225,114 @@ python main.py
 
 ---
 
+## 🧪 Test the VLM standalone
+
+```bash
+pip install transformers Pillow
+
+# Webcam — auto analysis every 7s
+python test_vlm.py --webcam
+
+# Webcam — manual analysis on SPACE key
+python test_vlm.py --webcam --capture
+
+# Static image
+python test_vlm.py --image photo.jpg
+```
+
+---
+
+## 🍓 Deployment — Raspberry Pi 5 + Hailo-8
+
+### 1. Copy project to RPi5
+
+```bash
+scp -r assistive_ai_system_v2 pi@<IP>:~/
+```
+
+### 2. Run setup script (once)
+
+```bash
+chmod +x setup_rpi5.sh
+./setup_rpi5.sh
+```
+
+This installs HailoRT, Python dependencies, downloads `yolov8n.hef` and Moondream2.
+
+### 3. Activate Hailo-8 + VLM
+
+```python
+# config.py
+USE_HAILO = True
+VLM_ENABLED = True
+```
+
+### 4. Run
+
+```bash
+source .venv/bin/activate
+python main.py
+```
+
+---
+
 ## 📸 Requirements
 
-* Python 3.9+
-* Webcam
-* GPU (optional but recommended)
+| Component | PC (dev) | RPi5 (prod) |
+|-----------|----------|-------------|
+| Python | 3.10+ | 3.10+ |
+| Camera | Webcam | USB / CSI |
+| GPU | Optional (NVIDIA) | Hailo-8 (via M.2) |
+| RAM | 8GB+ | 8GB |
+| OS | Windows / Linux | Raspberry Pi OS 64-bit |
+
+---
+
+## ⚙️ Key Configuration (`config.py`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `SYSTEM_MODE` | `"navigation"` | `navigation`, `exploration`, `human_priority` |
+| `SMOOTHING_ALPHA` | `0.3` | Position smoothing (lower = smoother) |
+| `RISK_HIGH_THRESHOLD` | `0.7` | Risk score triggering danger alert |
+| `VLM_NARRATOR_INTERVAL` | `7.0` | Seconds between VLM scene descriptions |
+| `VLM_ENABLED` | `False` | Enable Moondream2 narration |
+| `USE_HAILO` | `False` | Enable Hailo-8 hardware inference |
 
 ---
 
 ## 🧠 Research Contributions
 
-This project introduces:
-
-* **Temporal Scene Modeling**
-* **Context-Aware Decision Systems**
+* **Temporal Scene Modeling** with exponential smoothing
+* **Risk Scoring** combining proximity, velocity and object type
+* **Context-Aware Decision Systems** — speaks only when it matters
 * **Cognitive Filtering for AI Assistants**
-* **Real-time Human-Centered AI Interaction**
-
-👉 It bridges the gap between:
-
-* computer vision
-* and human perception
+* **VLM-based Scene Narration** with danger detection and change detection
 
 ---
 
 ## ⚠️ Current Limitations
 
-* Sensitivity to small movements
-* Approximate distance estimation
-* No explicit danger classification (yet)
+* Distance estimation remains approximate (bbox-based)
+* VLM narration requires ~1.7GB RAM on RPi5
+* Hailo-8 VLM inference not yet validated on target hardware
 
 ---
 
 ## 🔮 Future Work
 
-* 🚧 Danger detection (collision risk)
-* 🚧 Natural language narration
-* 🚧 Embedded deployment (Raspberry Pi / Jetson)
+* 🚧 Explicit danger alert with priority interruption
+* 🚧 Multi-language TTS support
 * 🚧 User testing with visually impaired individuals
-* 🚧 Multi-language support
+* 🚧 Fine-tuned VLM for navigation-specific descriptions
+* 🚧 Stereoscopic depth estimation for precise distance
 
 ---
 
 ## 👨‍💻 Author
 
 **Ariel Kamdem**
-Master’s Student in Artificial Intelligence & Big Data
+Master's Student in Artificial Intelligence & Big Data
 
 ---
 
@@ -260,10 +342,10 @@ Contributions are welcome!
 
 You can:
 
-* improve detection
-* optimize context logic
-* enhance audio interaction
-* propose new features
+* improve detection accuracy
+* optimize context and risk logic
+* enhance VLM prompt engineering
+* propose new features or hardware integrations
 
 ---
 
@@ -275,5 +357,5 @@ This project is for academic and research purposes.
 
 ## 💡 Final Thought
 
-> “The goal is not to make AI see more,
-> but to make it **say less, and say better**.”
+> "The goal is not to make AI see more,
+> but to make it **say less, and say better**."

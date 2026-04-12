@@ -4,29 +4,40 @@ from collections import Counter
 
 import config
 
+# Mots-clés déclenchant une alerte immédiate (danger potentiel)
+DANGER_KEYWORDS = {
+    "car", "truck", "bus", "motorcycle", "bicycle", "bike",
+    "dog", "stairs", "step", "hole", "crowd", "traffic",
+    "road", "street", "vehicle", "obstacle"
+}
+
 # Moondream2 chargé une seule fois au démarrage si VLM_ENABLED
 _moondream_model = None
-_moondream_tokenizer = None
 
 
 def _load_moondream():
-    global _moondream_model, _moondream_tokenizer
+    global _moondream_model
     if _moondream_model is not None:
         return True
+
     try:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        model_id = "vikhyatk/moondream2"
-        revision = "2025-01-09"
+        import moondream as md
+    except ImportError:
+        print("[VLM] moondream non installé → VLM désactivé.")
+        return False
+
+    try:
         print("[VLM] Chargement de Moondream2...")
-        _moondream_tokenizer = AutoTokenizer.from_pretrained(
-            model_id, revision=revision
-        )
-        _moondream_model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            revision=revision,
-            trust_remote_code=True,
-        )
-        _moondream_model.eval()
+        for device in ("cuda", "cpu"):
+            try:
+                _moondream_model = md.vl(local=True, model="moondream-2b-int8", device=device)
+                print(f"[VLM] Moondream2 prêt sur {device.upper()}.")
+                break
+            except Exception as e:
+                if device == "cuda":
+                    print(f"[VLM] GPU indisponible, essai CPU...")
+                else:
+                    raise
         print("[VLM] Moondream2 prêt.")
         return True
     except Exception as e:
@@ -55,6 +66,8 @@ class SceneNarrator:
         self._last_frame = None
         self._last_objects = {}
         self._lock = threading.Lock()
+
+        self._last_spoken = ""  # dernière description prononcée
 
         self._thread = threading.Thread(target=self._narrator_loop, daemon=True)
         self._thread.start()
@@ -129,27 +142,37 @@ class SceneNarrator:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil_image = Image.fromarray(rgb)
 
-            # Encode l'image
-            image_embeds = _moondream_model.encode_image(pil_image)
-
-            # Requête orientée navigation pour malvoyant
+            # Encode l'image et interroge le modèle
+            encoded = _moondream_model.encode_image(pil_image)
             prompt = (
                 "I am a visually impaired person wearing smart glasses. "
                 "In one short sentence, describe only what is directly in front of me "
                 "that I should be aware of to move safely."
             )
-
-            answer = _moondream_model.answer_question(
-                image_embeds,
-                prompt,
-                _moondream_tokenizer,
-            )
-
+            answer = _moondream_model.query(encoded, prompt)["answer"]
             return answer.strip() if answer else None
 
         except Exception as e:
             print(f"[VLM_ERROR] {e}")
             return None
+
+    # ------------------------------------------------------------------
+    # Filtrage intelligent
+    # ------------------------------------------------------------------
+    def _is_danger(self, description: str) -> bool:
+        words = description.lower().split()
+        return any(w in DANGER_KEYWORDS for w in words)
+
+    def _has_changed(self, current: str) -> bool:
+        """True si la scène a significativement changé (similarité Jaccard < 60%)."""
+        if not self._last_spoken:
+            return True
+        prev_words = set(self._last_spoken.lower().split())
+        curr_words = set(current.lower().split())
+        if not prev_words or not curr_words:
+            return True
+        similarity = len(prev_words & curr_words) / len(prev_words | curr_words)
+        return similarity < 0.6
 
     # ------------------------------------------------------------------
     # Boucle de fond
@@ -175,9 +198,18 @@ class SceneNarrator:
             if description is None:
                 description = self._build_rule_description(objects)
 
-            if description:
-                print(f"[NARRATOR] {description}")
+            if not description:
+                continue
+
+            danger = self._is_danger(description)
+            changed = self._has_changed(description)
+
+            if danger or changed:
+                print(f"[NARRATOR] {description}" + (" ⚠ DANGER" if danger else ""))
+                self._last_spoken = description
                 self.audio.speak(description)
+            else:
+                print(f"[NARRATOR] muet — scène stable")
 
         print("[NARRATOR] stopped")
 
