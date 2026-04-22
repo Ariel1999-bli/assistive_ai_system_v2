@@ -29,6 +29,7 @@ TRACK_RECENCY_BONUS = 0.12
 # ==============================
 STATE_STABLE_TIME = 1.5
 STATE_APPROACH_THRESHOLD = 0.12
+STATE_MOVE_THRESHOLD_PX = 18.0
 
 # ==============================
 # SEMANTIC FILTERING
@@ -106,3 +107,47 @@ OBJECT_CLOSE_THRESHOLD = 0.82
 # ==============================
 TTS_RATE = 210
 SPEAK_COOLDOWN = 0.3
+
+# ==============================
+# SMOOTHING
+# ==============================
+SMOOTHING_ALPHA = 0.3
+
+# ==============================
+# RISK SCORING
+# ==============================
+RISK_WEIGHTS = {
+    "car": 3.0,
+    "bicycle": 2.0,
+    "person": 1.5,
+    "default": 1.0,
+}
+RISK_HIGH_THRESHOLD = 0.7
+
+# ==============================
+# NARRATOR
+# ==============================
+NARRATOR_ENABLED = True
+VLM_NARRATOR_INTERVAL = 7.0
+VLM_ENABLED = False
+NARRATOR_JACCARD_THRESHOLD = 0.6
+NARRATOR_MIN_PARTS = 2
+
+# Ralentissement pendant transitions
+NARRATOR_STABILITY_REQUIRED = 1.3
+NARRATOR_PENDING_CONFIRMATIONS = 2
+NARRATOR_POST_SPEAK_GRACE = 2.2
+
+# ==============================
+# CONTEXT FILTER
+# ==============================
+CTX_MIN_SPEAK_INTERVAL = 1.2
+CTX_SAME_MESSAGE_INTERVAL = 3.0
+CTX_SCENE_STABILITY_TIME = 0.5
+CTX_NARRATION_EXTRA_DELAY = 1.0
+
+# ==============================
+# HAILO-8
+# ==============================
+USE_HAILO = False
+HAILO_MODEL_PATH = "models/yolov8n.hef"

@@ -3,6 +3,8 @@ import cv2
 from perception.detector import ObjectDetector
 from scene.scene_memory import SceneMemory
 from scene.state_machine import StateMachine
+from scene.scene_narrator import SceneNarrator
+from scene.environment_change_detector import EnvironmentChangeDetector
 from decision.decision_engine import DecisionEngine
 from audio.audio_engine import AudioEngine
 from context.context_manager import ContextManager
@@ -23,8 +25,9 @@ def draw_objects(frame, objects):
         obj_id = obj["id"]
         state = obj["state"]
         direction = obj["direction"]
+        risk = obj.get("risk_score", 0.0)
 
-        text = f"{label} ID:{obj_id} {state} {direction}"
+        text = f"{label} ID:{obj_id} {state} {direction} R:{risk:.2f}"
 
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
@@ -45,9 +48,11 @@ def main():
     detector = ObjectDetector()
     memory = SceneMemory()
     state_machine = StateMachine()
+    ead = EnvironmentChangeDetector()
     decision_engine = DecisionEngine()
     context_manager = ContextManager()
     audio = AudioEngine()
+    narrator = SceneNarrator()
 
     cap = cv2.VideoCapture(0)
 
@@ -72,30 +77,49 @@ def main():
             # 3. État
             objects = state_machine.update(objects)
 
-            # 4. Décision
+            # 4. EAD léger
+            ead_state = ead.update(list(objects.values()))
+
+            # 5. Décision réactive
             messages = decision_engine.decide(objects)
 
-            # 5. Contexte final
+            # 6. Contexte final sur messages réactifs
             for msg in messages:
+                # L'idée ici :
+                # - si la scène change vraiment -> comportement normal
+                # - si la scène n'a pas changé, ContextManager reste le filtre final
                 final_msg = context_manager.process(list(objects.values()), msg)
 
                 if final_msg:
                     print(f"[FINAL SPEAK] {final_msg}")
                     audio.speak(final_msg)
 
-            # 6. Debug visuel
+            # 7. Mise à jour narrator
+            narrator.update(frame, objects)
+
+            # 8. Narration globale :
+            # on la laisse passer seulement si la scène est stable
+            narration = narrator.get_message()
+            if narration and ead_state.get("scene_stable", False):
+                final_narration = context_manager.process(list(objects.values()), narration)
+
+                if final_narration:
+                    print(f"[NARRATOR FINAL] {final_narration}")
+                    audio.speak(final_narration)
+
+            # 9. Debug visuel
             draw_objects(frame, objects)
 
             cv2.imshow("Assistive AI v2", frame)
 
-            # ESC pour quitter
-            if cv2.waitKey(1) == 27:
+            if cv2.waitKey(1) == 27:  # ESC
                 break
 
     finally:
         print("🛑 Stopping system...")
         cap.release()
         cv2.destroyAllWindows()
+        narrator.stop()
         audio.stop()
 
 

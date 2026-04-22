@@ -1,279 +1,265 @@
-# 🚀 Assistive AI v2
 
-## Context-Aware Visual Assistance System for the Visually Impaired
-
----
-
-## 📌 Overview
-
-**Assistive AI v2** is a real-time intelligent system designed to assist visually impaired individuals by providing **context-aware audio descriptions of their environment**.
-
-Unlike traditional object detection systems, this project goes beyond simple detection by introducing:
-
-* 🧠 Contextual understanding
-* ⏱ Temporal reasoning
-* 🎯 Intelligent decision-making
-* 🔊 Human-centered audio feedback
-
-👉 The goal is to transform raw visual perception into **useful, minimal, and actionable information**.
+# Assistive AI v2
+## A Context-Aware Real-Time Visual Mobility Assistant for the Visually Impaired
 
 ---
 
-## 🎯 Project Vision
+## Abstract
 
-The system evolves from:
+Assistive AI v2 is a real-time intelligent system designed to assist visually impaired individuals by providing context-aware audio feedback about their surroundings. Unlike traditional object detection systems that generate continuous and redundant descriptions, this project focuses on **selective communication**, **temporal reasoning**, and **context-aware decision-making**.
 
-> ❌ “An object detection system that speaks”
-
-to:
-
-> ✅ **A real-time contextual visual mobility assistant**
-
-This means:
-
-* Not everything detected is spoken
-* The system **decides what matters**
-* It behaves closer to **human perception and reasoning**
+The system transforms raw visual perception into **minimal, actionable, and user-relevant information**, aiming to reduce cognitive overload while improving situational awareness. The architecture integrates object detection, scene memory, temporal state modeling, decision logic, and cognitive filtering to produce adaptive and human-centered behavior.
 
 ---
 
-## 🧱 System Architecture
+## 1. Introduction
 
-The system is modular and follows a cognitive pipeline:
+Most existing assistive vision systems rely on direct mapping between perception and speech, leading to excessive, redundant, and often unusable outputs.
+
+This project addresses a fundamental question:
+
+> How can an AI system decide **what to say, when to say it, and when to remain silent?**
+
+Assistive AI v2 proposes a shift from:
+
+- frame-based perception  
+to  
+- **context-aware temporal understanding**
+
+and from:
+
+- exhaustive description  
+to  
+- **intelligent selective communication**
+
+---
+
+## 2. Problem Statement
+
+Traditional systems suffer from:
+
+- high redundancy in output
+- lack of temporal awareness
+- inability to prioritize information
+- cognitive overload for the user
+
+Therefore, the challenge is not only to detect objects, but to:
+
+- interpret their relevance
+- track their evolution over time
+- communicate only critical information
+
+---
+
+## 3. System Overview
+
+The system follows a modular cognitive pipeline:
 
 ```
+
 Perception → Memory → State → Decision → Context → Audio
-```
-
-### 📂 Project Structure
 
 ```
-perception/        # Object detection (YOLO)
-scene/             # Scene memory and tracking
-decision/          # Decision logic (message generation)
-context/           # Context manager (cognitive filtering)
-audio/             # Text-to-speech system
-main.py            # Main pipeline
-config.py          # System parameters
-```
+
+This pipeline models a simplified form of human perception and reasoning.
 
 ---
 
-## ⚙️ Core Components
+## 4. Architecture
 
-### 1. 🎥 Perception (Object Detection)
+### 4.1 Perception Layer
 
-* YOLO-based real-time detection
-* Bounding boxes, labels, and coordinates
-* Works on live camera input
-
----
-
-### 2. 🧠 Scene Memory
-
-* Tracks objects across frames
-* Assigns unique IDs
-* Stores:
-
-  * position history
-  * proximity score
-  * temporal persistence
+- Real-time object detection using YOLO
+- Outputs bounding boxes, labels, and spatial information
 
 ---
 
-### 3. 🔄 State Machine
+### 4.2 Scene Memory
 
-Defines object states:
-
-* `NEW`
-* `STABLE`
-* `APPROACHING`
-* `GONE`
-
-👉 Reduces noise and stabilizes perception.
+- Tracks objects across frames
+- Assigns persistent IDs
+- Maintains temporal information:
+  - position history
+  - proximity estimation
+  - stability over time
 
 ---
 
-### 4. 🎯 Decision Engine
+### 4.3 State Machine
 
-* Selects relevant objects
-* Prioritizes:
+Each object is modeled using discrete temporal states:
 
-  * 👤 people
-  * ⚠ obstacles
-* Generates messages like:
+- NEW
+- STABLE
+- APPROACHING
+- GONE
 
-  * `"Person ahead"`
-  * `"Two persons ahead"`
-  * `"Close ahead"`
+This enables the system to reason about **object dynamics** rather than static detections.
 
 ---
 
-### 5. 🧠 Context Manager (Core Innovation)
+### 4.4 Decision Engine
 
-The **Context Manager** is the key component that transforms the system into an intelligent assistant.
+The Decision Engine is responsible for:
 
-It:
+- selecting relevant objects
+- prioritizing critical elements (e.g., humans, obstacles)
+- generating concise messages
 
-* filters repetitive messages
-* stabilizes scene interpretation
-* applies temporal reasoning
-* prioritizes important information
+Examples:
 
-👉 It ensures:
+- "Person ahead"
+- "Person approaching on your left"
+- "Close ahead"
 
-> The system speaks **only when necessary**
-
----
-
-### 6. 🔊 Audio Engine
-
-* Asynchronous speech system
-* Non-blocking audio output
-* Smooth real-time interaction
+It operates under a **minimalist and reactive design philosophy**.
 
 ---
 
-## 🚀 Features
+### 4.5 Context Manager
 
-* ✅ Real-time object detection
-* ✅ Multi-object tracking
-* ✅ Context-aware decision-making
-* ✅ Reduced cognitive overload
-* ✅ Intelligent audio feedback
-* ✅ Multi-person detection support
-* ✅ Scene stability modeling
+The Context Manager is the **core cognitive component**.
 
----
+It ensures:
 
-## 🧪 Example Behavior
+- reduction of redundant messages
+- temporal consistency
+- prioritization of significant changes
+- suppression of irrelevant outputs
 
-### ❌ Before (raw system)
+It decides whether:
 
-```
-Person ahead
-Person ahead
-Person ahead
-Left
-Right
-Bottle on your left
-```
-
-### ✅ After (Assistive AI v2)
-
-```
-Person ahead
-(silence)
-Close ahead
-```
+> the system should speak or remain silent.
 
 ---
 
-## 🔧 Installation
+### 4.6 Audio Engine
 
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/Ariel1999-bli/assistive_ai_system_v2.git
-cd assistive-ai-v2
-```
+- Asynchronous text-to-speech system
+- Non-blocking communication
+- Real-time feedback
 
 ---
 
-### 2. Create environment (recommended)
+## 5. Behavioral Modes
 
-```bash
-conda create -n assistive-ai python=3.10
-conda activate assistive-ai
-```
+The system supports multiple operational modes:
 
----
-
-### 3. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
+### Navigation Mode
+- Focus on safety and mobility
+- Minimal communication
+- Emphasis on proximity and obstacles
 
 ---
 
-### 4. Run the system
-
-```bash
-python main.py
-```
-
----
-
-## 📸 Requirements
-
-* Python 3.9+
-* Webcam
-* GPU (optional but recommended)
+### Human Priority Mode
+- Focus on human presence
+- Increased sensitivity to people
+- More expressive descriptions
 
 ---
 
-## 🧠 Research Contributions
+### Exploration Mode
+- Focus on environmental understanding
+- Descriptive behavior
+- Reduced urgency in alerts
+
+---
+
+## 6. Key Contributions
 
 This project introduces:
 
-* **Temporal Scene Modeling**
-* **Context-Aware Decision Systems**
-* **Cognitive Filtering for AI Assistants**
-* **Real-time Human-Centered AI Interaction**
-
-👉 It bridges the gap between:
-
-* computer vision
-* and human perception
+- **Context-aware decision-making for assistive AI**
+- **Temporal scene modeling in real-time systems**
+- **Cognitive filtering for human-centered interaction**
+- **Selective communication as a design paradigm**
+- **Multi-mode adaptive behavior**
 
 ---
 
-## ⚠️ Current Limitations
+## 7. System Behavior Example
 
-* Sensitivity to small movements
-* Approximate distance estimation
-* No explicit danger classification (yet)
+### Raw Detection System
 
----
+```
 
-## 🔮 Future Work
+Person ahead
+Person ahead
+Person ahead
+Bottle on your left
+Chair on your right
 
-* 🚧 Danger detection (collision risk)
-* 🚧 Natural language narration
-* 🚧 Embedded deployment (Raspberry Pi / Jetson)
-* 🚧 User testing with visually impaired individuals
-* 🚧 Multi-language support
+```
 
 ---
 
-## 👨‍💻 Author
+### Assistive AI v2
 
-**Ariel Kamdem**
+```
+
+Person ahead
+(silence — stable scene)
+Person approaching on your left
+(silence)
+Close ahead
+
+```
+
+---
+
+## 8. Current Limitations
+
+- Sensitivity to detection noise (YOLO limitations)
+- Approximate distance estimation
+- Occasional false multi-person detection
+- Exploration mode not fully optimized
+
+---
+
+## 9. Future Work
+
+- Event-based reasoning (EAD-inspired logic)
+- Integration of Vision-Language Models (VLM)
+- Improved risk prediction
+- Embedded deployment (Raspberry Pi / Jetson)
+- Real-world testing with visually impaired users
+- Multilingual support
+
+---
+
+## 10. Research Perspective
+
+This work contributes to the intersection of:
+
+- computer vision
+- human-centered AI
+- assistive technologies
+- real-time intelligent systems
+
+It aligns with emerging research directions focusing on:
+
+- **reducing redundancy in AI outputs**
+- **temporal awareness in perception systems**
+- **efficient human-AI interaction**
+
+---
+
+## 11. Author
+
+Ariel Kamdem  
 Master’s Student in Artificial Intelligence & Big Data
 
 ---
 
-## 🤝 Contributions
+## 12. License
 
-Contributions are welcome!
-
-You can:
-
-* improve detection
-* optimize context logic
-* enhance audio interaction
-* propose new features
+This project is developed for academic and research purposes.
 
 ---
 
-## 📜 License
+## Final Insight
 
-This project is for academic and research purposes.
-
----
-
-## 💡 Final Thought
-
-> “The goal is not to make AI see more,
-> but to make it **say less, and say better**.”
+> A truly intelligent assistive system does not describe everything it sees.  
+> It communicates only what is necessary, at the right time.
+```

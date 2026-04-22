@@ -14,6 +14,9 @@ class SceneMemory:
     - réassocier les nouvelles détections aux objets existants
     - maintenir un identifiant stable
     - mémoriser direction, annonces, état, temps de dernière apparition
+    - lisser la position
+    - calculer vitesse et score de risque
+    - réduire les faux doublons de personnes
     """
 
     def __init__(self):
@@ -32,6 +35,16 @@ class SceneMemory:
     def _bbox_area(bbox: Tuple[float, float, float, float]) -> float:
         x1, y1, x2, y2 = bbox
         return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+    @staticmethod
+    def _bbox_width(bbox: Tuple[float, float, float, float]) -> float:
+        x1, _, x2, _ = bbox
+        return max(0.0, x2 - x1)
+
+    @staticmethod
+    def _bbox_height(bbox: Tuple[float, float, float, float]) -> float:
+        _, y1, _, y2 = bbox
+        return max(0.0, y2 - y1)
 
     @staticmethod
     def _euclidean_distance(
@@ -70,9 +83,6 @@ class SceneMemory:
         self,
         center: Tuple[float, float]
     ) -> str:
-        """
-        Détermine une direction simple à partir de la position horizontale.
-        """
         x, _ = center
 
         left_limit = config.FRAME_WIDTH / 3.0
@@ -89,21 +99,143 @@ class SceneMemory:
         bbox: Tuple[float, float, float, float]
     ) -> float:
         """
-        Score simple de proximité basé sur :
-        - taille relative de la bbox
-        - position basse dans l'image
-
-        Plus le score est élevé, plus l'objet est considéré proche.
+        Score de proximité basé sur la hauteur de la bbox relative à la frame.
+        bbox_height / frame_height → 0.0 (loin) à 1.0 (très proche).
         """
-        _, _, _, y2 = bbox
-        area = self._bbox_area(bbox)
+        bbox_height = self._bbox_height(bbox)
+        return min(bbox_height / float(config.FRAME_HEIGHT), 1.0)
 
-        frame_area = float(config.FRAME_WIDTH * config.FRAME_HEIGHT)
-        area_ratio = area / frame_area if frame_area > 0 else 0.0
-        bottom_ratio = y2 / float(config.FRAME_HEIGHT)
+    def _compute_risk_score(self, obj: dict) -> float:
+        """
+        Score de risque combinant :
+        - proximité (0.5)
+        - approche (0.3)
+        - vitesse (0.2)
+        """
+        label = obj.get("label", "")
+        proximity = obj.get("proximity_score", 0.0)
+        prev_proximity = obj.get("previous_proximity_score")
+        vx, vy = obj.get("velocity", (0.0, 0.0))
 
-        proximity = (0.65 * area_ratio) + (0.35 * bottom_ratio)
-        return float(proximity)
+        proximity_delta = (proximity - prev_proximity) if prev_proximity is not None else 0.0
+        approach_factor = max(0.0, proximity_delta * 8.0)
+
+        speed = math.sqrt(vx ** 2 + vy ** 2)
+        speed_factor = min(speed / 300.0, 1.0)
+
+        weight = config.RISK_WEIGHTS.get(label, config.RISK_WEIGHTS["default"])
+        risk = weight * (0.5 * proximity + 0.3 * approach_factor + 0.2 * speed_factor)
+        return min(risk, 1.0)
+
+    # ------------------------------------------------------------------
+    # Heuristiques anti-faux-doublons personnes
+    # ------------------------------------------------------------------
+    def _person_duplicate_score(self, p1: dict, p2: dict) -> float:
+        """
+        Score heuristique indiquant si deux objets 'person' ressemblent
+        probablement à une double détection d'une seule personne.
+        """
+        bbox1 = p1["bbox"]
+        bbox2 = p2["bbox"]
+
+        iou = self._bbox_iou(bbox1, bbox2)
+        c1 = p1.get("smoothed_center", p1["center"])
+        c2 = p2.get("smoothed_center", p2["center"])
+        dist = self._euclidean_distance(c1, c2)
+
+        prox1 = p1.get("proximity_score", 0.0)
+        prox2 = p2.get("proximity_score", 0.0)
+        prox_diff = abs(prox1 - prox2)
+
+        dir1 = p1.get("direction", "center")
+        dir2 = p2.get("direction", "center")
+        same_direction = dir1 == dir2
+
+        w1 = self._bbox_width(bbox1)
+        w2 = self._bbox_width(bbox2)
+        h1 = self._bbox_height(bbox1)
+        h2 = self._bbox_height(bbox2)
+
+        avg_w = max((w1 + w2) / 2.0, 1.0)
+        avg_h = max((h1 + h2) / 2.0, 1.0)
+
+        horizontal_close = abs(c1[0] - c2[0]) <= max(55.0, 0.55 * avg_w)
+        vertical_close = abs(c1[1] - c2[1]) <= max(70.0, 0.45 * avg_h)
+
+        score = 0.0
+
+        if iou >= 0.55:
+            score += 1.0
+        elif iou >= 0.35:
+            score += 0.6
+
+        if horizontal_close and vertical_close:
+            score += 0.7
+
+        if prox_diff <= 0.08:
+            score += 0.4
+        elif prox_diff <= 0.12:
+            score += 0.2
+
+        if same_direction:
+            score += 0.2
+
+        return score
+
+    def _choose_person_to_keep(self, p1: dict, p2: dict) -> int:
+        """
+        Garde la détection la plus crédible / stable.
+        """
+        score1 = (
+            2.0 * p1.get("times_seen", 1)
+            + 4.0 * p1.get("confidence", 0.0)
+            + 1.0 * self._bbox_area(p1["bbox"])
+            + 30.0 * p1.get("proximity_score", 0.0)
+        )
+        score2 = (
+            2.0 * p2.get("times_seen", 1)
+            + 4.0 * p2.get("confidence", 0.0)
+            + 1.0 * self._bbox_area(p2["bbox"])
+            + 30.0 * p2.get("proximity_score", 0.0)
+        )
+
+        return p1["id"] if score1 >= score2 else p2["id"]
+
+    def _merge_duplicate_persons(self) -> None:
+        """
+        Supprime certains faux doublons 'person' conservés par le tracking.
+        Heuristique volontairement conservatrice.
+        """
+        visible_persons = [
+            o for o in self.objects.values()
+            if o.get("label") == "person" and o.get("missing_frames", 0) == 0
+        ]
+
+        if len(visible_persons) < 2:
+            return
+
+        to_delete = set()
+
+        for i in range(len(visible_persons)):
+            p1 = visible_persons[i]
+            if p1["id"] in to_delete:
+                continue
+
+            for j in range(i + 1, len(visible_persons)):
+                p2 = visible_persons[j]
+                if p2["id"] in to_delete:
+                    continue
+
+                duplicate_score = self._person_duplicate_score(p1, p2)
+
+                if duplicate_score >= 1.25:
+                    keep_id = self._choose_person_to_keep(p1, p2)
+                    remove_id = p2["id"] if keep_id == p1["id"] else p1["id"]
+                    to_delete.add(remove_id)
+
+        for obj_id in to_delete:
+            if obj_id in self.objects:
+                del self.objects[obj_id]
 
     # ------------------------------------------------------------------
     # Gestion d'objets
@@ -123,6 +255,7 @@ class SceneMemory:
             "label": detection["label"],
             "bbox": bbox,
             "center": center,
+            "smoothed_center": center,
             "previous_center": None,
             "confidence": detection["confidence"],
 
@@ -138,6 +271,10 @@ class SceneMemory:
             "previous_proximity_score": None,
             "state": "NEW",
             "last_state_change": now,
+
+            # vélocité et risque
+            "velocity": (0.0, 0.0),
+            "risk_score": 0.0,
 
             # mémoire sémantique
             "already_announced": False,
@@ -160,15 +297,31 @@ class SceneMemory:
         old_direction = obj["direction"]
         old_proximity = obj["proximity_score"]
         old_center = obj["center"]
+        old_smoothed = obj.get("smoothed_center", old_center)
 
         bbox = detection["bbox"]
         center = self._bbox_center(bbox)
         direction = self._compute_direction(center)
         proximity_score = self._compute_proximity_score(bbox)
 
+        alpha = config.SMOOTHING_ALPHA
+        smoothed_center = (
+            alpha * center[0] + (1.0 - alpha) * old_smoothed[0],
+            alpha * center[1] + (1.0 - alpha) * old_smoothed[1],
+        )
+
+        dt = now - obj.get("last_seen", now)
+        if dt > 0.0:
+            vx = (smoothed_center[0] - old_smoothed[0]) / dt
+            vy = (smoothed_center[1] - old_smoothed[1]) / dt
+        else:
+            vx, vy = obj.get("velocity", (0.0, 0.0))
+
         obj["bbox"] = bbox
         obj["previous_center"] = old_center
         obj["center"] = center
+        obj["smoothed_center"] = smoothed_center
+        obj["velocity"] = (vx, vy)
         obj["confidence"] = detection["confidence"]
         obj["last_seen"] = now
         obj["missing_frames"] = 0
@@ -180,6 +333,8 @@ class SceneMemory:
         obj["previous_proximity_score"] = old_proximity
         obj["proximity_score"] = proximity_score
 
+        obj["risk_score"] = self._compute_risk_score(obj)
+
         return obj
 
     def _match_detection_to_object(
@@ -187,13 +342,6 @@ class SceneMemory:
         detection: dict,
         used_ids: set
     ) -> Optional[int]:
-        """
-        Associe une détection à un objet existant par :
-        - même label
-        - distance centre
-        - IoU bbox
-        - récence implicite via missing_frames
-        """
         best_id = None
         best_score = -1.0
 
@@ -238,17 +386,11 @@ class SceneMemory:
         return None
 
     def _mark_missing_objects(self, matched_ids: set) -> None:
-        """
-        Marque les objets non revus sur cette frame.
-        """
         for obj_id, obj in self.objects.items():
             if obj_id not in matched_ids:
                 obj["missing_frames"] += 1
 
     def _remove_stale_objects(self) -> None:
-        """
-        Supprime les objets trop anciens / perdus.
-        """
         to_delete = []
 
         for obj_id, obj in self.objects.items():
@@ -262,9 +404,6 @@ class SceneMemory:
     # API principale
     # ------------------------------------------------------------------
     def update(self, detections: List[dict]) -> Dict[int, dict]:
-        """
-        Met à jour la mémoire de scène à partir des détections brutes.
-        """
         now = time.time()
         used_ids = set()
         matched_ids = set()
@@ -288,5 +427,6 @@ class SceneMemory:
 
         self._mark_missing_objects(matched_ids)
         self._remove_stale_objects()
+        self._merge_duplicate_persons()
 
         return self.objects
